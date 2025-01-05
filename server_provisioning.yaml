@@ -1,0 +1,211 @@
+name: Automated Server Provisioning
+version: 5.3.0
+author: Vuk Markovic
+
+description: >
+  This project automates the setup and configuration of web and database servers using Ansible and Terraform.
+
+steps:
+  - name: Setup AWS credentials
+    commands:
+      - aws configure --profile myprofile
+      - aws sts get-caller-identity
+
+  - name: Configure Terraform
+    commands:
+      - terraform init
+      - terraform plan -var-file=vars.tfvars
+      - terraform apply -auto-approve -var-file=vars.tfvars
+
+  - name: Configure Ansible
+    commands:
+      - ansible-galaxy install -r requirements.yml
+      - ansible-playbook -i inventory.yml setup.yml
+
+  - name: Verify and test setup
+    commands:
+      - ansible-playbook -i inventory.yml test.yml
+
+requirements:
+  terraform:
+    version: ">= 1.3.0"
+    configurations:
+      provider "aws":
+        region: "us-west-1"
+        assume_role {
+          role_arn = "arn:aws:iam::123456789012:role/YourRole"
+        }
+
+      # Encrypt S3 bucket with AWS KMS
+      resource "aws_s3_bucket" "secure_bucket" {
+        bucket = "my-secure-bucket"
+        server_side_encryption_configuration {
+          rule {
+            apply_server_side_encryption_by_default {
+              sse_algorithm     = "aws:kms"
+              kms_master_key_id = "alias/my-key"
+            }
+          }
+        }
+      }
+
+      # Encrypt EBS volumes
+      resource "aws_ebs_volume" "secure_volume" {
+        availability_zone = "us-west-1a"
+        size              = 50
+        encrypted         = true
+        kms_key_id        = "alias/my-key"
+      }
+
+      # Enable GuardDuty for malicious activity monitoring
+      resource "aws_guardduty_detector" "main" {
+        enable = true
+      }
+
+      # AWS Config rule to enforce EBS encryption
+      resource "aws_config_config_rule" "encrypted_volumes" {
+        name = "ebs-encrypted-volumes"
+        source {
+          owner             = "AWS"
+          source_identifier = "EC2_VOLUME_IN_USE_ENCRYPTED"
+        }
+      }
+
+      # Automate OS patch management using AWS Systems Manager
+      resource "aws_ssm_patch_baseline" "default" {
+        name             = "DefaultPatchBaseline"
+        operating_system = "AMAZON_LINUX_2"
+        approval_rules {
+          patch_filters {
+            key    = "CLASSIFICATION"
+            values = ["Security"]
+          }
+          approve_after_days = 7
+        }
+      }
+
+      # Set up log retention policies in CloudWatch
+      resource "aws_cloudwatch_log_group" "main" {
+        name              = "/aws/application/log-group"
+        retention_in_days = 30
+      }
+
+  ansible:
+    version: ">= 2.10"
+    playbooks:
+      setup.yml:
+        - name: Configure web server
+          hosts: web
+          tasks:
+            - name: Install web server
+              apt:
+                name: apache2
+                state: present
+
+            - name: Start and enable web server
+              service:
+                name: apache2
+                state: started
+                enabled: true
+
+        - name: Configure database server
+          hosts: db
+          tasks:
+            - name: Install database server
+              apt:
+                name: mysql-server
+                state: present
+
+            - name: Secure MySQL installation
+              shell: |
+                mysql_secure_installation <<EOF
+                n
+                yourpassword
+                yourpassword
+                y
+                y
+                y
+                y
+                EOF
+              args:
+                executable: /bin/bash
+
+            - name: Create database and user
+              mysql_db:
+                name: myappdb
+                state: present
+
+              mysql_user:
+                name: myappuser
+                password: myappuserpassword
+                priv: '*.*:ALL'
+                state: present
+
+      test.yml:
+        - name: Test web server
+          hosts: web
+          tasks:
+            - name: Check if web server is running
+              uri:
+                url: http://{{ ansible_host }}
+                status_code: 200
+
+        - name: Test database connection
+          hosts: db
+          tasks:
+            - name: Verify MySQL service
+              service:
+                name: mysql
+                state: started
+
+            - name: Check database connection
+              mysql_query:
+                login_user: myappuser
+                login_password: myappuserpassword
+                query: "SHOW DATABASES;"
+                db: myappdb
+
+monitoring:
+  tools:
+    - AWS CloudWatch
+    - ElasticSearch (ELK)
+    - GuardDuty
+    - AWS Inspector
+  alerts:
+    - Unauthorized access attempts
+    - Suspicious network activity
+    - Privilege escalation attempts
+
+pipeline:
+  ci_cd:
+    tool: GitHub Actions
+    steps:
+      - name: Run Terraform Linter
+        run: tfsec .
+
+      - name: Run Ansible Linter
+        run: ansible-lint playbook.yml
+
+      - name: Initiate AWS Inspector Scan
+        run: |
+          aws inspector start-assessment-run --assessment-template-arn <template-arn>
+
+      - name: Deploy Infrastructure
+        run: terraform apply -auto-approve -var-file=vars.tfvars
+
+      - name: Configure Servers
+        run: ansible-playbook -i inventory.yml setup.yml
+
+automation:
+  secrets:
+    management:
+      - Use HashiCorp Vault for secrets management.
+      - Dynamically inject secrets during runtime.
+  compliance:
+    tools:
+      - AWS Config
+      - OPA (Open Policy Agent)
+    checks:
+      - Enforce encrypted storage.
+      - Ensure secure network configurations.
+      - Verify all IAM roles follow least privilege.
